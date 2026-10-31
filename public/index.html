@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stack Converter — Substack to LinkedIn &amp; X</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="app-shell" class="page-shell state-input">
+    <!-- Minimalist Apple Hero & Distraction-Free URL Input State -->
+    <header class="hero">
+      <h1 class="hero-title">Stack Converter</h1>
+      <p class="hero-subtitle">
+        Paste any public Substack URL to preserve headers, lists, quotes, inline links, and paired media captions—complete with high-converting engagement hooks grounded in your text.
+      </p>
+
+      <form id="url-form" class="url-bar">
+        <input
+          id="url-input"
+          type="url"
+          class="url-input"
+          value=""
+          placeholder="Paste a Substack article URL..."
+          required
+          autocomplete="off"
+          aria-label="Substack Article URL"
+        />
+        <button id="btn-convert" type="submit" class="btn-convert">
+          Convert
+        </button>
+      </form>
+    </header>
+
+    <!-- Smooth Loading Indicator -->
+    <div id="loading-state" class="loading-card hidden">
+      <div class="spinner"></div>
+      <p id="loading-text">Parsing article formatting, media, captions, and grounded hook...</p>
+    </div>
+
+    <!-- Smoothly Transitioned Output State -->
+    <main id="article-section" class="results-view hidden">
+      <!-- Frosted Glass Primary Action Bar -->
+      <div class="glass-dock">
+        <div class="dock-stats">
+          <span id="stat-summary" class="stat-pill">Ready to Paste</span>
+        </div>
+        <div class="dock-actions">
+          <button id="btn-copy-title" type="button" class="dock-btn dock-btn-ghost">
+            Copy Title
+          </button>
+          <button id="btn-copy-linkedin" type="button" class="dock-btn dock-btn-primary">
+            Copy for LinkedIn Article
+          </button>
+          <button id="btn-copy-x" type="button" class="dock-btn dock-btn-dark">
+            Copy for X Article
+          </button>
+        </div>
+      </div>
+
+      <!-- Content-Grounded Suggested Hook Card (Single Hook + Refresh) -->
+      <section class="hooks-card" aria-label="Suggested Engagement Hook">
+        <div class="hooks-header">
+          <div>
+            <h2 class="hooks-title">Suggested Hook</h2>
+            <p class="hooks-subtitle">
+              Grounded strictly in quotes, facts, and core insights from the article text.
+            </p>
+          </div>
+          <div class="segmented-control" role="tablist" aria-label="Hook Platform">
+            <button
+              id="tab-hooks-linkedin"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              class="seg-btn active"
+            >
+              LinkedIn Hook
+            </button>
+            <button
+              id="tab-hooks-x"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              class="seg-btn"
+            >
+              X Hook
+            </button>
+          </div>
+        </div>
+        <div id="hooks-list" class="hooks-list"></div>
+      </section>
+
+      <!-- Live Preview of the Converted Article -->
+      <article class="paper-card">
+        <div class="preview-badge-row">
+          <span class="preview-label">Live Converted Article Preview</span>
+        </div>
+        <header class="paper-header">
+          <h1 id="art-title" class="art-title"></h1>
+          <p id="art-subtitle" class="art-subtitle"></p>
+        </header>
+        <div id="art-body" class="art-body"></div>
+      </article>
+    </main>
+  </div>
+
+  <!-- Minimal Apple Pill Toast -->
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

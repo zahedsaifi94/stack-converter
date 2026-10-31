@@ -1,0 +1,6 @@
+.csrf_secret
+__pycache__/
+*.pyc
+media_vault/*
+!media_vault/.gitkeep
+public/stack-converter.zip
