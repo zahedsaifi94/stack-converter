@@ -261,16 +261,36 @@
     const platform = activeHookPlatform;
     const pool = getHooksPool(currentArticle);
     const items = pool[platform] || [];
-    const nextIdx = (activeHookIndex[platform] || 0) + 1;
+    const curIdx = activeHookIndex[platform] || 0;
+    const nextIdx = curIdx + 1;
+
+    const currentItem = items[curIdx % Math.max(1, items.length)];
+    const currentText =
+      typeof currentItem === 'object' && currentItem !== null
+        ? String(currentItem.text || '').trim()
+        : String(currentItem || '').trim();
+
+    // Instant switch through pre-generated distinct archetypes first
+    if (nextIdx < items.length) {
+      const nextCandidate = items[nextIdx];
+      const nextText =
+        typeof nextCandidate === 'object' && nextCandidate !== null
+          ? String(nextCandidate.text || '').trim()
+          : String(nextCandidate || '').trim();
+      if (nextText && nextText !== currentText) {
+        activeHookIndex[platform] = nextIdx;
+        renderHooksCard(currentArticle);
+        showToast(
+          'Switched to ' +
+            (nextCandidate.label || (platform === 'linkedin' ? 'LinkedIn' : 'X')) +
+            ' hook.'
+        );
+        return;
+      }
+    }
 
     btnEl.disabled = true;
     btnEl.classList.add('spinning');
-
-    const currentItem = items[(activeHookIndex[platform] || 0) % Math.max(1, items.length)];
-    const currentText =
-      typeof currentItem === 'object' && currentItem !== null
-        ? String(currentItem.text || '')
-        : String(currentItem || '');
 
     try {
       const resp = await fetch(
@@ -285,7 +305,12 @@
       );
       if (resp.ok) {
         const data = await resp.json();
-        if (data && data.hook && data.hook.text) {
+        if (
+          data &&
+          data.hook &&
+          data.hook.text &&
+          String(data.hook.text).trim() !== currentText
+        ) {
           if (!currentArticle.hooks) {
             currentArticle.hooks = { linkedin: [], x: [] };
           }
@@ -295,21 +320,38 @@
           currentArticle.hooks[platform].push(data.hook);
           activeHookIndex[platform] = currentArticle.hooks[platform].length - 1;
           renderHooksCard(currentArticle);
-          showToast('Generated a fresh ' + (platform === 'linkedin' ? 'LinkedIn' : 'X') + ' hook.');
+          showToast(
+            'Generated a fresh ' +
+              (platform === 'linkedin' ? 'LinkedIn' : 'X') +
+              ' hook.'
+          );
           return;
         }
       }
     } catch (_err) {
-      // Fall through to next archetype in pool if offline
+      // Fall through to next distinct archetype in pool
     } finally {
       btnEl.disabled = false;
       btnEl.classList.remove('spinning');
     }
 
-    if (items.length > 0) {
-      activeHookIndex[platform] = nextIdx % items.length;
+    if (items.length > 1) {
+      for (let step = 1; step <= items.length; step++) {
+        const candidateIdx = (curIdx + step) % items.length;
+        const cand = items[candidateIdx];
+        const candText =
+          typeof cand === 'object' && cand !== null
+            ? String(cand.text || '').trim()
+            : String(cand || '').trim();
+        if (candText !== currentText || step === items.length) {
+          activeHookIndex[platform] = candidateIdx;
+          break;
+        }
+      }
       renderHooksCard(currentArticle);
-      showToast('Refreshed ' + (platform === 'linkedin' ? 'LinkedIn' : 'X') + ' hook.');
+      showToast(
+        'Refreshed ' + (platform === 'linkedin' ? 'LinkedIn' : 'X') + ' hook.'
+      );
     }
   }
 

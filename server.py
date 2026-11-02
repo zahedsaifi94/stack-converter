@@ -374,13 +374,27 @@ def _get_video_lock(media_upload_id: str) -> threading.Lock:
     return VIDEO_LOCKS[media_upload_id]
 
 
+LAST_LLM_STATUS = 'uninitialized'
+
+
 def _call_gemini_json(system_prompt: str, user_prompt: str, timeout_sec: int = 22) -> dict[str, object] | None:
   """Calls the public Gemini API (or OpenAI/Groq fallback) with strict JSON output."""
-  api_key = (os.environ.get('GEMINI_API_KEY') or '').strip()
+  global LAST_LLM_STATUS
+  raw_env = (
+      os.environ.get('GEMINI_API_KEY')
+      or os.environ.get('GOOGLE_API_KEY')
+      or os.environ.get('API_KEY')
+      or ''
+  )
+  api_key = raw_env.strip().strip('"').strip("'").strip()
 
   # Support Groq (gsk_...) or OpenAI (sk-...) keys seamlessly if pasted into GEMINI_API_KEY or GROQ_API_KEY
-  groq_key = (os.environ.get('GROQ_API_KEY') or (api_key if api_key.startswith('gsk_') else '')).strip()
-  openai_key = (os.environ.get('OPENAI_API_KEY') or (api_key if api_key.startswith('sk-') else '')).strip()
+  groq_key = (
+      os.environ.get('GROQ_API_KEY') or (api_key if api_key.startswith('gsk_') else '')
+  ).strip().strip('"').strip("'")
+  openai_key = (
+      os.environ.get('OPENAI_API_KEY') or (api_key if api_key.startswith('sk-') else '')
+  ).strip().strip('"').strip("'")
 
   if groq_key or openai_key:
     endpoint = (
@@ -413,22 +427,27 @@ def _call_gemini_json(system_prompt: str, user_prompt: str, timeout_sec: int = 2
         resp_json = json.loads(resp.read().decode('utf-8'))
       raw_text = resp_json['choices'][0]['message']['content'].strip()
       raw_text = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw_text, flags=re.DOTALL).strip()
+      LAST_LLM_STATUS = f'ok:{model}'
       return json.loads(raw_text)
     except (urllib.error.URLError, KeyError, ValueError, OSError) as err:
+      LAST_LLM_STATUS = f'err:{model}:{type(err).__name__}'
       logging.warning('OpenAI/Groq API call failed: %s', err)
 
   if not api_key or api_key.startswith(('gsk_', 'sk-')):
+    LAST_LLM_STATUS = 'missing_api_key'
     return None
 
-  ext_payload = json.dumps({
-      'system_instruction': {'parts': [{'text': system_prompt}]},
-      'contents': [{'role': 'user', 'parts': [{'text': user_prompt}]}],
-      'generationConfig': {
-          'temperature': 0.35,
-          'responseMimeType': 'application/json',
-      },
-  }).encode('utf-8')
-  for ext_model in ('gemini-2.5-flash', 'gemini-2.0-flash'):
+  model_configs = [
+      ('gemini-2.5-flash', {'temperature': 0.35, 'responseMimeType': 'application/json', 'thinkingConfig': {'thinkingBudget': 0}}),
+      ('gemini-2.5-flash-lite', {'temperature': 0.35, 'responseMimeType': 'application/json', 'thinkingConfig': {'thinkingBudget': 0}}),
+      ('gemini-2.0-flash', {'temperature': 0.35, 'responseMimeType': 'application/json'}),
+  ]
+  for ext_model, gen_cfg in model_configs:
+    ext_payload = json.dumps({
+        'system_instruction': {'parts': [{'text': system_prompt}]},
+        'contents': [{'role': 'user', 'parts': [{'text': user_prompt}]}],
+        'generationConfig': gen_cfg,
+    }).encode('utf-8')
     try:
       req = urllib.request.Request(
           f'https://generativelanguage.googleapis.com/v1beta/models/{ext_model}:generateContent',
@@ -446,8 +465,13 @@ def _call_gemini_json(system_prompt: str, user_prompt: str, timeout_sec: int = 2
           parts[-1].get('text', ''),
       ).strip()
       raw_text = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw_text, flags=re.DOTALL).strip()
+      LAST_LLM_STATUS = f'ok:{ext_model}'
       return json.loads(raw_text)
+    except urllib.error.HTTPError as http_err:
+      LAST_LLM_STATUS = f'http_{http_err.code}:{ext_model}'
+      logging.warning('GEMINI_API_KEY call (%s) HTTP %d: %s', ext_model, http_err.code, http_err)
     except (urllib.error.URLError, KeyError, ValueError, OSError) as err:
+      LAST_LLM_STATUS = f'err:{ext_model}:{type(err).__name__}'
       logging.warning('GEMINI_API_KEY call (%s) failed: %s', ext_model, err)
   return None
 
@@ -580,44 +604,6 @@ def _extract_full_article_text(blocks: list[dict[str, object]]) -> str:
   return '\n\n'.join(line for line in full_text_lines if line)
 
 
-def generate_grounded_hooks(
-    title: str, subtitle: str, blocks: list[dict[str, object]]
-) -> dict[str, list[dict[str, object]]]:
-  """Generates 4 LinkedIn and 4 X hooks using HOOK_SYSTEM_PROMPT via Gemini."""
-  full_article_text = _extract_full_article_text(blocks)
-  user_prompt = (
-      f'Article Title: {title}\n'
-      f'Article Subtitle: {subtitle}\n'
-      f'Full Article Text:\n{full_article_text[:15000]}'
-  )
-  parsed_hooks = _call_gemini_json(HOOK_SYSTEM_PROMPT, user_prompt, timeout_sec=24)
-  if isinstance(parsed_hooks, dict) and 'linkedin' in parsed_hooks and 'x' in parsed_hooks:
-    for h in parsed_hooks['linkedin']:
-      if isinstance(h, dict):
-        h['word_count'] = len(str(h.get('text', '')).split())
-    for h in parsed_hooks['x']:
-      if isinstance(h, dict):
-        h['char_count'] = len(str(h.get('text', '')))
-    return parsed_hooks
-
-  paragraphs = [
-      str(b.get('text', '')).strip()
-      for b in blocks
-      if b.get('type') in ('p', 'quote')
-      and len(str(b.get('text', '')).strip()) > 35
-  ]
-  lead = paragraphs[0] if paragraphs else (subtitle or title)
-  second = paragraphs[1] if len(paragraphs) > 1 else lead
-  return {
-      'linkedin': [
-          {'label': 'Counter-Intuitive Thesis', 'text': f'{title}\n\n{lead}\n\n{second}'},
-      ],
-      'x': [
-          {'label': 'Hard Truth Opener', 'text': f'{title}\n\n{lead}'[:275], 'char_count': len(f'{title}\n\n{lead}'[:275])},
-      ],
-  }
-
-
 LINKEDIN_ARCHETYPES = [
     (
         'Counter-Intuitive Thesis',
@@ -667,6 +653,142 @@ X_ARCHETYPES = [
 ]
 
 
+def _build_multi_archetype_fallback_hooks(
+    title: str, subtitle: str, blocks: list[dict[str, object]], offset: int = 0
+) -> dict[str, list[dict[str, object]]]:
+  """Synthesizes 4 distinct LinkedIn hooks and 4 distinct X hooks grounded in article text."""
+  paragraphs = [
+      str(b.get('text', '')).strip()
+      for b in blocks
+      if b.get('type') in ('p', 'quote')
+      and len(str(b.get('text', '')).strip()) > 40
+  ]
+  headers = [
+      str(b.get('text', '')).strip()
+      for b in blocks
+      if b.get('type') in ('h1', 'h2', 'h3')
+      and len(str(b.get('text', '')).strip()) > 8
+  ]
+  quotes = [
+      str(b.get('text', '')).strip()
+      for b in blocks
+      if b.get('type') == 'quote'
+      and len(str(b.get('text', '')).strip()) > 25
+  ]
+  sentences = []
+  for p in paragraphs:
+    for s in _split_sentences(p):
+      if 30 <= len(s) <= 210 and s not in sentences:
+        sentences.append(s)
+
+  if not paragraphs:
+    paragraphs = [subtitle or title]
+  if not sentences:
+    sentences = [subtitle or title]
+
+  def _pick(seq: list[str], idx: int) -> str:
+    return seq[(idx + offset) % len(seq)]
+
+  s0 = _pick(sentences, 0)
+  s1 = _pick(sentences, 1)
+  s2 = _pick(sentences, 2)
+  s3 = _pick(sentences, 3)
+  s4 = _pick(sentences, 4)
+  s5 = _pick(sentences, 5)
+  p0 = _pick(paragraphs, 0)
+  p1 = _pick(paragraphs, 1)
+  p2 = _pick(paragraphs, 2)
+  p3 = _pick(paragraphs, 3)
+  h0 = _pick(headers, 0) if headers else (subtitle or title)
+  q0 = _pick(quotes, 0) if quotes else s2
+
+  li_hooks = [
+      {
+          'label': 'Counter-Intuitive Thesis',
+          'text': f'{s0}\n\n{p1}\n\n{s3}',
+      },
+      {
+          'label': 'Concrete Analogy',
+          'text': f'{s1}\n\n{p2}\n\n{s4}',
+      },
+      {
+          'label': 'Practitioner Question',
+          'text': f'{h0}\n\n{p0}\n\n{s5}',
+      },
+      {
+          'label': 'Verbatim Quote + Synthesis',
+          'text': f'"{q0}"\n\n{p3}',
+      },
+  ]
+  for h in li_hooks:
+    h['word_count'] = len(str(h['text']).split())
+
+  def _trim_x(txt: str, limit: int = 276) -> str:
+    txt = txt.strip()
+    if len(txt) <= limit:
+      return txt
+    return txt[: limit - 1].rsplit(' ', 1)[0].rstrip('.,;:') + '.'
+
+  x_hooks = [
+      {
+          'label': 'Hard Truth Opener',
+          'text': _trim_x(f'{s0}\n\n{s1}'),
+      },
+      {
+          'label': 'Mechanism Shift',
+          'text': _trim_x(f'{h0}\n\n→ {s2}\n→ {s3}'),
+      },
+      {
+          'label': 'Diagnostic Litmus Test',
+          'text': _trim_x(f'{s4}\n\n{s5}'),
+      },
+      {
+          'label': 'Verbatim Mic-Drop',
+          'text': _trim_x(f'"{q0}"\n\n{s0}', 238),
+      },
+  ]
+  for h in x_hooks:
+    h['char_count'] = len(str(h['text']))
+
+  return {'linkedin': li_hooks, 'x': x_hooks}
+
+
+def generate_grounded_hooks(
+    title: str, subtitle: str, blocks: list[dict[str, object]]
+) -> dict[str, list[dict[str, object]]]:
+  """Generates 4 LinkedIn and 4 X hooks using HOOK_SYSTEM_PROMPT via Gemini."""
+  full_article_text = _extract_full_article_text(blocks)
+  user_prompt = (
+      f'Article Title: {title}\n'
+      f'Article Subtitle: {subtitle}\n'
+      f'Full Article Text:\n{full_article_text[:15000]}'
+  )
+  parsed_hooks = _call_gemini_json(HOOK_SYSTEM_PROMPT, user_prompt, timeout_sec=24)
+  if (
+      isinstance(parsed_hooks, dict)
+      and isinstance(parsed_hooks.get('linkedin'), list)
+      and len(parsed_hooks['linkedin']) >= 2
+      and isinstance(parsed_hooks.get('x'), list)
+      and len(parsed_hooks['x']) >= 2
+  ):
+    for h in parsed_hooks['linkedin']:
+      if isinstance(h, dict):
+        h['word_count'] = len(str(h.get('text', '')).split())
+    for h in parsed_hooks['x']:
+      if isinstance(h, dict):
+        h['char_count'] = len(str(h.get('text', '')))
+    return parsed_hooks
+
+  return _build_multi_archetype_fallback_hooks(title, subtitle, blocks, offset=0)
+
+
+SINGLE_HOOK_SYSTEM_PROMPT = (
+    HOOK_SYSTEM_PROMPT.split('OUTPUT FORMAT:')[0]
+    + 'OUTPUT FORMAT:\nReturn ONLY a single valid JSON object matching this exact structure '
+    '(no markdown code fences or commentary):\n{"label": "...", "text": "..."}\n'
+)
+
+
 def generate_single_refreshed_hook(
     title: str,
     subtitle: str,
@@ -674,7 +796,7 @@ def generate_single_refreshed_hook(
     platform: str,
     archetype_idx: int,
     exclude_text: str = '',
-) -> dict[str, object] | None:
+) -> dict[str, object]:
   """Generates a single fresh hook for the given platform & archetype using HOOK_SYSTEM_PROMPT."""
   is_x = platform == 'x'
   archetypes = X_ARCHETYPES if is_x else LINKEDIN_ARCHETYPES
@@ -684,6 +806,7 @@ def generate_single_refreshed_hook(
   user_prompt = (
       f'Platform: {"X (Twitter)" if is_x else "LinkedIn"}\n'
       f'Required Hook Archetype: {label} — {arch_desc}\n'
+      f'Variation Number: {archetype_idx + 1}\n'
       f'Previously Shown Hook (DO NOT repeat this angle or opening sentence): {exclude_text}\n\n'
       f'Article Title: {title}\n'
       f'Article Subtitle: {subtitle}\n'
@@ -691,29 +814,39 @@ def generate_single_refreshed_hook(
       'Return ONLY a single JSON object matching this exact schema:\n'
       f'{{"label": "{label}", "text": "..."}}'
   )
-  res = _call_gemini_json(HOOK_SYSTEM_PROMPT, user_prompt, timeout_sec=18)
+  res = _call_gemini_json(SINGLE_HOOK_SYSTEM_PROMPT, user_prompt, timeout_sec=18)
   if isinstance(res, dict):
     if 'text' in res and isinstance(res['text'], str) and res['text'].strip():
       hook_text = res['text'].strip()
-      return {
-          'label': str(res.get('label') or label),
-          'text': hook_text,
-          'word_count': len(hook_text.split()),
-          'char_count': len(hook_text),
-      }
-    # Handle case where model returned the full {"linkedin": [...], "x": [...]} object
+      if hook_text != exclude_text.strip():
+        return {
+            'label': str(res.get('label') or label),
+            'text': hook_text,
+            'word_count': len(hook_text.split()),
+            'char_count': len(hook_text),
+        }
     sub_list = res.get('x' if is_x else 'linkedin')
     if isinstance(sub_list, list) and sub_list:
       chosen = sub_list[archetype_idx % len(sub_list)]
       if isinstance(chosen, dict) and chosen.get('text'):
         hook_text = str(chosen['text']).strip()
-        return {
-            'label': str(chosen.get('label') or label),
-            'text': hook_text,
-            'word_count': len(hook_text.split()),
-            'char_count': len(hook_text),
-        }
-  return None
+        if hook_text != exclude_text.strip():
+          return {
+              'label': str(chosen.get('label') or label),
+              'text': hook_text,
+              'word_count': len(hook_text.split()),
+              'char_count': len(hook_text),
+          }
+
+  # Guaranteed distinct multi-archetype fallback grounded in article text
+  fallback_pool = _build_multi_archetype_fallback_hooks(
+      title, subtitle, blocks, offset=archetype_idx
+  )[platform]
+  for candidate in fallback_pool:
+    if str(candidate.get('text', '')).strip() != exclude_text.strip():
+      candidate['label'] = label
+      return candidate
+  return fallback_pool[archetype_idx % len(fallback_pool)]
 
 
 BROWSER_HEADERS = {
@@ -772,15 +905,30 @@ def _resolve_substack_endpoint(raw_url: str) -> tuple[str, str, str, str]:
   )
 
 
+def _ensure_four_hooks_in_cached_article(cached: dict[str, object]) -> dict[str, object]:
+  hooks = cached.get('hooks')
+  if (
+      not isinstance(hooks, dict)
+      or len(hooks.get('linkedin', [])) < 4
+      or len(hooks.get('x', [])) < 4
+  ):
+    cached['hooks'] = generate_grounded_hooks(
+        str(cached.get('title', '')),
+        str(cached.get('subtitle', '')),
+        list(cached.get('blocks', [])),
+    )
+  return cached
+
+
 def fetch_and_convert_substack_post(article_url: str) -> dict[str, object]:
   """Fetch any Substack article URL from any author, parse all blocks/captions, and convert videos."""
   cleaned_input = article_url.strip().split('?')[0].rstrip('/')
   if cleaned_input in ARTICLE_CACHE:
-    return ARTICLE_CACHE[cleaned_input]
+    return _ensure_four_hooks_in_cached_article(ARTICLE_CACHE[cleaned_input])
 
   api_url, pub_host, slug, canonical_url = _resolve_substack_endpoint(article_url)
   if canonical_url in ARTICLE_CACHE:
-    return ARTICLE_CACHE[canonical_url]
+    return _ensure_four_hooks_in_cached_article(ARTICLE_CACHE[canonical_url])
 
   req = urllib.request.Request(api_url, headers=BROWSER_HEADERS)
   with urllib.request.urlopen(req, timeout=15) as resp:
@@ -1066,7 +1214,7 @@ class BridgeRequestHandler(server.BaseHTTPRequestHandler):
           hooks_pool = article.get('hooks', {}).get(platform, [])
           if hooks_pool:
             hook_obj = hooks_pool[archetype_idx % len(hooks_pool)]
-        body = json.dumps({'hook': hook_obj}).encode('utf-8')
+        body = json.dumps({'hook': hook_obj, 'status': LAST_LLM_STATUS}).encode('utf-8')
         self.send_response(200)
         self._apply_security_headers('application/json; charset=utf-8')
         self.send_header('Access-Control-Allow-Origin', '*')
