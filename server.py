@@ -437,17 +437,23 @@ def _call_gemini_json(system_prompt: str, user_prompt: str, timeout_sec: int = 2
     LAST_LLM_STATUS = 'missing_api_key'
     return None
 
-  model_configs = [
-      ('gemini-2.5-flash', {'temperature': 0.35, 'responseMimeType': 'application/json', 'thinkingConfig': {'thinkingBudget': 0}}),
-      ('gemini-2.5-flash-lite', {'temperature': 0.35, 'responseMimeType': 'application/json', 'thinkingConfig': {'thinkingBudget': 0}}),
-      ('gemini-2.0-flash', {'temperature': 0.35, 'responseMimeType': 'application/json'}),
+  ext_payload = json.dumps({
+      'system_instruction': {'parts': [{'text': system_prompt}]},
+      'contents': [{'role': 'user', 'parts': [{'text': user_prompt}]}],
+      'generationConfig': {
+          'temperature': 0.35,
+          'responseMimeType': 'application/json',
+      },
+  }).encode('utf-8')
+
+  candidate_models = [
+      'gemini-flash-latest',
+      'gemini-2.5-flash',
+      'gemini-3-flash-preview',
+      'gemini-2.5-pro',
   ]
-  for ext_model, gen_cfg in model_configs:
-    ext_payload = json.dumps({
-        'system_instruction': {'parts': [{'text': system_prompt}]},
-        'contents': [{'role': 'user', 'parts': [{'text': user_prompt}]}],
-        'generationConfig': gen_cfg,
-    }).encode('utf-8')
+  errors = []
+  for ext_model in candidate_models:
     try:
       req = urllib.request.Request(
           f'https://generativelanguage.googleapis.com/v1beta/models/{ext_model}:generateContent',
@@ -468,11 +474,16 @@ def _call_gemini_json(system_prompt: str, user_prompt: str, timeout_sec: int = 2
       LAST_LLM_STATUS = f'ok:{ext_model}'
       return json.loads(raw_text)
     except urllib.error.HTTPError as http_err:
-      LAST_LLM_STATUS = f'http_{http_err.code}:{ext_model}'
-      logging.warning('GEMINI_API_KEY call (%s) HTTP %d: %s', ext_model, http_err.code, http_err)
+      err_body = ''
+      try:
+        err_body = http_err.read().decode('utf-8', errors='replace')[:120]
+      except OSError:
+        pass
+      errors.append(f'{ext_model}:http_{http_err.code}:{err_body}')
     except (urllib.error.URLError, KeyError, ValueError, OSError) as err:
-      LAST_LLM_STATUS = f'err:{ext_model}:{type(err).__name__}'
-      logging.warning('GEMINI_API_KEY call (%s) failed: %s', ext_model, err)
+      errors.append(f'{ext_model}:{type(err).__name__}')
+
+  LAST_LLM_STATUS = ' | '.join(errors)
   return None
 
 
