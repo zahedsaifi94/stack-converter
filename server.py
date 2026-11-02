@@ -1089,6 +1089,12 @@ class BridgeRequestHandler(server.BaseHTTPRequestHandler):
     self._apply_security_headers('text/html; charset=utf-8')
     self.end_headers()
 
+  def do_HEAD(self) -> None:  # pylint: disable=invalid-name
+    self.send_response(200)
+    self._apply_security_headers('text/plain; charset=utf-8')
+    self.send_header('Content-Length', '2')
+    self.end_headers()
+
   def do_GET(self) -> None:  # pylint: disable=invalid-name
     if not self._check_rate_limit():
       self._send_json(429, {'error': 'Too Many Requests'})
@@ -1096,6 +1102,15 @@ class BridgeRequestHandler(server.BaseHTTPRequestHandler):
 
     parsed = urllib.parse.urlparse(self.path)
     route = parsed.path
+
+    if route in ('/healthz', '/ping'):
+      body = b'ok'
+      self.send_response(200)
+      self._apply_security_headers('text/plain; charset=utf-8')
+      self.send_header('Content-Length', str(len(body)))
+      self.end_headers()
+      self.wfile.write(body)
+      return
 
     if route == '/api/session':
       body = json.dumps({
