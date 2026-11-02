@@ -446,10 +446,17 @@ def _call_gemini_json(system_prompt: str, user_prompt: str, timeout_sec: int = 2
       },
   }).encode('utf-8')
 
+  custom_model = (os.environ.get('GEMINI_MODEL') or '').strip()
   candidate_models = [
-      'gemini-3-flash-preview',
-      'gemini-flash-latest',
-      'gemini-2.5-flash',
+      m
+      for m in [
+          custom_model,
+          'gemini-3-flash-preview',
+          'gemini-3.1-pro-preview',
+          'gemini-3-pro-preview',
+          'gemini-flash-latest',
+      ]
+      if m
   ]
   errors = []
   for ext_model in candidate_models:
