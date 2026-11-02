@@ -447,10 +447,9 @@ def _call_gemini_json(system_prompt: str, user_prompt: str, timeout_sec: int = 2
   }).encode('utf-8')
 
   candidate_models = [
+      'gemini-3-flash-preview',
       'gemini-flash-latest',
       'gemini-2.5-flash',
-      'gemini-3-flash-preview',
-      'gemini-2.5-pro',
   ]
   errors = []
   for ext_model in candidate_models:
