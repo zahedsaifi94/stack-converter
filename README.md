@@ -1,6 +1,6 @@
 # Stack Converter
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/zahedsaifi94/stack-converter)
+**Try it: [stack-converter.onrender.com](https://stack-converter.onrender.com/)**
 
 Paste a public Substack article URL. Get the article back as ready-to-paste **LinkedIn Article** and **X Article** formats, with the images, captions and embedded video carried over, and four AI-generated opening hooks per platform that are grounded strictly in the article's own text.
 
@@ -29,9 +29,9 @@ export GEMINI_API_KEY=your_key        # optional; see "AI hooks" below
 
 Open the URL it prints, paste a Substack link, click Convert.
 
-## Deploying
+## Deploying your own
 
-The repo includes a `Dockerfile` and a `render.yaml`, so the **Deploy to Render** button above works out of the box (free plan). Set `GEMINI_API_KEY` as an environment variable in the Render dashboard. The service listens on `$PORT` (default 8080 in the container) and exposes `/healthz` and `/ping` for uptime monitors, so a free-tier instance can be kept awake with a cron ping.
+The hosted instance above runs on Render's free plan, so it may take a few seconds to wake up. To run your own copy: the repo includes a `Dockerfile` and a `render.yaml`, so you can [deploy it to Render](https://render.com/deploy?repo=https://github.com/zahedsaifi94/stack-converter) in a few clicks and set `GEMINI_API_KEY` as an environment variable in the Render dashboard. The service listens on `$PORT` (default 8080 in the container) and exposes `/healthz` and `/ping` for uptime monitors, so a free-tier instance can be kept awake with a cron ping.
 
 It will run anywhere that can run a Docker image or a plain `python3 server.py`.
 
