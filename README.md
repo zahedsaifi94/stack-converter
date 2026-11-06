@@ -7,3 +7,7 @@ A minimalist, Apple-inspired web application that takes any public Substack arti
 ## Deployment
 - Set environment variable `GEMINI_API_KEY=<your_ai_studio_api_key>`.
 - Deploy using the included `Dockerfile` (via Render, Railway, ).
+
+## License
+
+MIT. See [LICENSE](LICENSE).
